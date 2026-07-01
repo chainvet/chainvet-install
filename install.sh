@@ -5,14 +5,15 @@
 #
 # Installs the z3 runtime (a system dependency; v0.1.0 links it dynamically) and
 # one or more Chainvet binaries from the latest GitHub release of chainvet/chainvet.
-# On a terminal it asks which components to install; piped/non-interactive it
-# installs the CLI (or whatever CHAINVET_BINS lists).
+# On a terminal it shows an arrow-key checkbox menu to pick components; piped or
+# non-interactive it installs the CLI (or whatever CHAINVET_BINS lists).
 #
 # Env overrides:
 #   CHAINVET_BINS             space-separated binaries to install, skipping the
-#                             prompt — e.g. "chainvet chainvet-lsp" or "all".
+#                             menu — e.g. "chainvet chainvet-lsp" or "all".
 #   CHAINVET_VERSION          release tag to install (default: latest)
 #   CHAINVET_INSTALL_DIR      install prefix (default: /usr/local/bin, else ~/.local/bin)
+#   CHAINVET_MENU=basic       use the numbered menu instead of the arrow-key one
 #   CHAINVET_NONINTERACTIVE=1 never prompt (install CHAINVET_BINS, else the CLI)
 set -eu
 
@@ -28,6 +29,15 @@ err()  { printf '\033[1;31merror:\033[0m %s\n' "$1" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1; }
 sudo_() { if [ "$(id -u)" -eq 0 ]; then "$@"; elif need sudo; then sudo "$@"; else err "need root to run: $*"; fi; }
 
+desc_for() {
+  case "$1" in
+    chainvet)        printf 'CLI analyzer (recommended)' ;;
+    chainvet-ci)     printf 'SARIF output + CI exit codes' ;;
+    chainvet-server) printf 'REST API server' ;;
+    chainvet-lsp)    printf 'editor language server' ;;
+  esac
+}
+
 # --- 0. platform guard (v0.1.0 is x86_64 Linux only) -------------------------
 os="$(uname -s)"; arch="$(uname -m)"
 [ "$os" = "Linux" ]    || err "this installer supports x86_64 Linux only (found $os). Build from source for other platforms."
@@ -36,39 +46,107 @@ need curl || err "curl is required."
 need tar  || err "tar is required."
 
 # --- 1. choose components ----------------------------------------------------
-# curl | sh leaves the script on stdin, so read the menu answer from /dev/tty.
+# A terminal capable of raw mode (needed for the arrow-key menu)?
+tui_capable() {
+  [ -r /dev/tty ] && [ -w /dev/tty ] || return 1
+  need stty || return 1
+  case "${TERM:-dumb}" in dumb|"") return 1 ;; esac
+  return 0
+}
+
+# Numbered prompt — fallback for terminals that can't do raw mode.
+numbered_prompt() {
+  {
+    printf '\nSelect Chainvet components to install:\n'
+    printf '  1) chainvet         CLI analyzer                 (recommended)\n'
+    printf '  2) chainvet-ci      SARIF output + CI exit codes\n'
+    printf '  3) chainvet-server  REST API server\n'
+    printf '  4) chainvet-lsp     editor language server\n'
+    printf 'Enter numbers (e.g. "1 3"), "all", or press Enter for [1]: '
+  } > /dev/tty
+  read reply < /dev/tty || reply=""
+  BINS=""
+  case "$reply" in
+    "")        BINS="chainvet" ;;
+    all|ALL|a) BINS="$ALL_BINS" ;;
+    *) for nsel in $reply; do case "$nsel" in
+         1) BINS="$BINS chainvet" ;;
+         2) BINS="$BINS chainvet-ci" ;;
+         3) BINS="$BINS chainvet-server" ;;
+         4) BINS="$BINS chainvet-lsp" ;;
+         *) warn "ignoring invalid choice: $nsel" ;;
+       esac; done ;;
+  esac
+}
+
+# Arrow-key checkbox menu on /dev/tty: up/down move, space toggles, enter
+# confirms, q aborts the selection (falls back to the CLI).
+tui_select() {
+  old_stty=$(stty -g < /dev/tty 2>/dev/null) || { numbered_prompt; return; }
+  n=0; for _x in $ALL_BINS; do n=$((n + 1)); done
+  cur=1; checked=" chainvet "
+  esc=$(printf '\033')
+
+  _checked() { case "$checked" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+  _nth() { _i=1; for _it in $ALL_BINS; do [ "$_i" = "$1" ] && { printf '%s' "$_it"; return; }; _i=$((_i + 1)); done; }
+  _draw() {
+    _i=1
+    for _it in $ALL_BINS; do
+      if _checked "$_it"; then _box="[x]"; else _box="[ ]"; fi
+      if [ "$_i" = "$cur" ]; then
+        printf '\033[K\033[36m ❯ %s \033[1m%-16s\033[0m \033[2m%s\033[0m\n' "$_box" "$_it" "$(desc_for "$_it")"
+      else
+        printf '\033[K   %s %-16s \033[2m%s\033[0m\n' "$_box" "$_it" "$(desc_for "$_it")"
+      fi
+      _i=$((_i + 1))
+    done > /dev/tty
+  }
+
+  stty -echo -icanon min 1 time 0 < /dev/tty
+  printf '\033[?25l' > /dev/tty
+  trap 'stty "$old_stty" < /dev/tty 2>/dev/null; printf "\033[?25h" > /dev/tty' EXIT INT TERM
+  printf '\nSelect components — \033[1m↑/↓\033[0m move, \033[1mspace\033[0m toggles, \033[1menter\033[0m confirms:\n' > /dev/tty
+  _draw
+  while :; do
+    k=$(dd bs=1 count=1 2>/dev/null < /dev/tty)
+    case "$k" in
+      "$esc")
+        dd bs=1 count=1 >/dev/null 2>&1 < /dev/tty          # discard '[' or 'O'
+        k=$(dd bs=1 count=1 2>/dev/null < /dev/tty)
+        case "$k" in
+          A) cur=$(( cur > 1 ? cur - 1 : n )) ;;            # up
+          B) cur=$(( cur < n ? cur + 1 : 1 )) ;;            # down
+        esac ;;
+      " ")
+        it=$(_nth "$cur")
+        if _checked "$it"; then
+          out=""; for x in $checked; do [ "$x" = "$it" ] || out="$out $x"; done; checked=" $out "
+        else checked="$checked$it "; fi ;;
+      q|Q) checked=""; break ;;
+      "") break ;;                                          # enter
+    esac
+    printf '\033[%dA' "$n" > /dev/tty
+    _draw
+  done
+  stty "$old_stty" < /dev/tty 2>/dev/null
+  printf '\033[?25h\n' > /dev/tty
+  trap - EXIT INT TERM
+  BINS=""; for it in $ALL_BINS; do _checked "$it" && BINS="$BINS $it"; done
+}
+
 select_bins() {
   if [ -n "${CHAINVET_BINS:-}" ]; then BINS="$CHAINVET_BINS"
   elif [ "${CHAINVET_NONINTERACTIVE:-}" = "1" ] || [ ! -r /dev/tty ]; then BINS="chainvet"
-  else
-    {
-      printf '\nSelect Chainvet components to install:\n'
-      printf '  1) chainvet         CLI analyzer                 (recommended)\n'
-      printf '  2) chainvet-ci      SARIF output + CI exit codes\n'
-      printf '  3) chainvet-server  REST API server\n'
-      printf '  4) chainvet-lsp     editor language server\n'
-      printf 'Enter numbers (e.g. "1 3"), "all", or press Enter for [1]: '
-    } > /dev/tty
-    read reply < /dev/tty || reply=""
-    BINS=""
-    case "$reply" in
-      "")        BINS="chainvet" ;;
-      all|ALL|a) BINS="$ALL_BINS" ;;
-      *) for n in $reply; do case "$n" in
-           1) BINS="$BINS chainvet" ;;
-           2) BINS="$BINS chainvet-ci" ;;
-           3) BINS="$BINS chainvet-server" ;;
-           4) BINS="$BINS chainvet-lsp" ;;
-           *) warn "ignoring invalid choice: $n" ;;
-         esac; done ;;
-    esac
+  elif [ "${CHAINVET_MENU:-}" = "basic" ]; then numbered_prompt
+  elif tui_capable; then tui_select
+  else numbered_prompt
   fi
-  # normalize "all", de-duplicate, default to the CLI if nothing valid remained
+  # normalize "all", de-duplicate, default to the CLI, validate against the set
   [ "$BINS" = "all" ] && BINS="$ALL_BINS"
   BINS="$(printf '%s\n' $BINS | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
   [ -n "$BINS" ] || BINS="chainvet"
   for b in $BINS; do
-    case " $ALL_BINS " in *" $b "*) : ;; *) err "unknown binary '$b' (choose from: $ALL_BINS)";; esac
+    case " $ALL_BINS " in *" $b "*) : ;; *) err "unknown binary '$b' (choose from: $ALL_BINS)" ;; esac
   done
 }
 select_bins

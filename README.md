@@ -15,10 +15,12 @@ this repo hosts only the installers, no source.
 curl -fsSL https://install.chainvet.dev/install.sh | sh
 ```
 
-On a terminal it **prompts which components to install** — the `chainvet` CLI
-(default), plus optionally `chainvet-ci`, `chainvet-server`, `chainvet-lsp`.
-Piped or non-interactive runs install the CLI unless `CHAINVET_BINS` says
-otherwise, so scripted installs stay deterministic:
+On a terminal it shows an **arrow-key checkbox menu** to pick which components to
+install (**↑/↓** move, **space** toggles, **enter** confirms) — the `chainvet`
+CLI (preselected), plus optionally `chainvet-ci`, `chainvet-server`,
+`chainvet-lsp`. Terminals that can't do raw mode fall back to a numbered prompt
+(force it with `CHAINVET_MENU=basic`). Piped or non-interactive runs install the
+CLI unless `CHAINVET_BINS` says otherwise, so scripted installs stay deterministic:
 
 ```sh
 # install everything, no prompt
@@ -39,6 +41,7 @@ Set via environment variables:
 | `CHAINVET_BINS` | _(prompt, else `chainvet`)_ | components to install: `all`, or a space-separated list of `chainvet` / `chainvet-ci` / `chainvet-server` / `chainvet-lsp` (skips the prompt) |
 | `CHAINVET_VERSION` | `latest` | release tag to install (e.g. `v0.1.0`) |
 | `CHAINVET_INSTALL_DIR` | `/usr/local/bin` (else `~/.local/bin`) | install prefix |
+| `CHAINVET_MENU` | _(arrow-key)_ | set to `basic` for the numbered menu |
 | `CHAINVET_NONINTERACTIVE` | _(unset)_ | set to `1` to never prompt |
 
 For each selected component the script installs the **z3 runtime** (a system
