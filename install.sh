@@ -41,9 +41,29 @@ install_z3() {
   elif need zypper;  then sudo_ zypper install -y libz3-4 || sudo_ zypper install -y z3-devel
   elif need apk;     then sudo_ apk add z3-libs || sudo_ apk add z3
   else err "no supported package manager found; install z3 manually, then re-run."; fi
-  ldconfig -p 2>/dev/null | grep -q 'libz3\.so' || warn "could not confirm libz3 is on the linker path; chainvet may fail to start."
 }
+
+# The release binary links the soname `libz3.so.4` (from its Ubuntu build host).
+# Some distros ship a different soname — e.g. Arch's z3 4.16 provides
+# `libz3.so.4.16` but no bare `libz3.so.4` — so the loader can't resolve it.
+# Bridge with a compat symlink; z3's C ABI is stable across 4.x, so this is safe.
+ensure_z3_soname() {
+  need_so="libz3.so.4"
+  # Already resolvable — present on disk in a default dir, or in the ldconfig cache?
+  for d in /usr/lib /usr/lib64 /lib /lib64 /usr/local/lib; do
+    [ -e "$d/$need_so" ] && return
+  done
+  ldconfig -p 2>/dev/null | grep -qE "[[:space:]]${need_so} " && return
+  real="$(find /usr/lib /usr/lib64 /usr/local/lib -maxdepth 1 -name 'libz3.so.4*' 2>/dev/null | sort -V | tail -1)"
+  [ -n "$real" ] || real="$(find /usr/lib /usr/lib64 /usr/local/lib -maxdepth 1 -name 'libz3.so*' 2>/dev/null | sort -V | tail -1)"
+  [ -n "$real" ] || { warn "libz3 not found after install; chainvet may fail to start."; return; }
+  say "bridging soname ${need_so} -> ${real}"
+  sudo_ ln -sf "$real" "$(dirname "$real")/${need_so}"
+  sudo_ ldconfig 2>/dev/null || true
+}
+
 install_z3
+ensure_z3_soname
 
 # --- 2. resolve version ------------------------------------------------------
 if [ "$VERSION" = "latest" ]; then
