@@ -15,6 +15,18 @@ this repo hosts only the installers, no source.
 curl -fsSL https://install.chainvet.dev/install.sh | sh
 ```
 
+On a terminal it **prompts which components to install** — the `chainvet` CLI
+(default), plus optionally `chainvet-ci`, `chainvet-server`, `chainvet-lsp`.
+Piped or non-interactive runs install the CLI unless `CHAINVET_BINS` says
+otherwise, so scripted installs stay deterministic:
+
+```sh
+# install everything, no prompt
+curl -fsSL https://install.chainvet.dev/install.sh | CHAINVET_BINS=all sh
+# just the CLI + language server
+curl -fsSL https://install.chainvet.dev/install.sh | CHAINVET_BINS="chainvet chainvet-lsp" sh
+```
+
 **Windows (PowerShell):** _coming soon_ — `install.ps1` will live here and be
 invoked with `irm https://install.chainvet.dev/install.ps1 | iex`.
 
@@ -24,12 +36,14 @@ Set via environment variables:
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `CHAINVET_BINS` | _(prompt, else `chainvet`)_ | components to install: `all`, or a space-separated list of `chainvet` / `chainvet-ci` / `chainvet-server` / `chainvet-lsp` (skips the prompt) |
 | `CHAINVET_VERSION` | `latest` | release tag to install (e.g. `v0.1.0`) |
 | `CHAINVET_INSTALL_DIR` | `/usr/local/bin` (else `~/.local/bin`) | install prefix |
+| `CHAINVET_NONINTERACTIVE` | _(unset)_ | set to `1` to never prompt |
 
-The script installs the **z3 runtime** (a system dependency — v0.1.0 links it
-dynamically) via the system package manager, downloads the `chainvet` CLI,
-verifies its `SHA256SUMS.txt` checksum, and installs the binary.
+For each selected component the script installs the **z3 runtime** (a system
+dependency — v0.1.0 links it dynamically) via the system package manager,
+downloads the binary, verifies its `SHA256SUMS.txt` checksum, and installs it.
 
 > Scope: v0.1.0 ships `x86_64-unknown-linux-gnu` only. Other arches/OSes (and a
 > self-contained, z3-bundled build) come in a later cross-platform phase.
