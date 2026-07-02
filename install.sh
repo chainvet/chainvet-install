@@ -77,6 +77,7 @@ numbered_prompt() {
          *) warn "ignoring invalid choice: $nsel" ;;
        esac; done ;;
   esac
+  return 0   # the case above may end on a non-zero test; don't let it trip `set -e`
 }
 
 # Arrow-key checkbox menu on /dev/tty: up/down move, space toggles, enter
@@ -132,6 +133,7 @@ tui_select() {
   printf '\033[?25h\n' > /dev/tty
   trap - EXIT INT TERM
   BINS=""; for it in $ALL_BINS; do _checked "$it" && BINS="$BINS $it"; done
+  return 0   # never let the loop's last _checked (a non-match) trip `set -e`
 }
 
 select_bins() {
